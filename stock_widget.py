@@ -372,19 +372,11 @@ class StockWidget:
 
         def worker() -> None:
             try:
-                for attempt in range(3):
-                    try:
-                        result = fetch_quotes(codes)
-                        for _ in range(2):
-                            if all(result.get(code) and result[code].has_current_price for code in codes):
-                                break
-                            time.sleep(0.25)
-                            result = fetch_quotes(codes)
-                        break
-                    except (ConnectionError, RemoteDisconnected, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
-                        if attempt == 2:
-                            raise
-                        time.sleep(0.25)
+                try:
+                    result = fetch_quotes(codes)
+                except (ConnectionError, RemoteDisconnected, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+                    time.sleep(2)
+                    result = fetch_quotes(codes)
                 self.root.after(0, lambda: self.finish_refresh(result, None))
             except Exception as exc:
                 message = str(exc)
