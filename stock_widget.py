@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - Windows target
 
 
 APP_NAME = "台股提醒"
+APP_VERSION = "v1.0.6"
 API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
 SETTINGS_PATH = Path(os.getenv("TWSTOCKWIDGET_SETTINGS_PATH", Path(os.getenv("LOCALAPPDATA", Path.home())) / "TWStockWidget" / "settings.json"))
@@ -299,7 +300,8 @@ class StockWidget:
         footer.pack(fill="x", padx=10, pady=(0, 5))
         footer.pack_propagate(False)
         self.status = tk.Label(footer, text="等待更新", bg=BG, fg=MUTED, anchor="w", font=("Microsoft JhengHei UI", 8))
-        self.status.pack(fill="both", expand=True)
+        self.status.pack(side="left", fill="both", expand=True)
+        tk.Label(footer, text=APP_VERSION, bg=BG, fg=MUTED, anchor="e", font=("Segoe UI", 8)).pack(side="right")
 
     @staticmethod
     def _header_button(parent: tk.Widget, text: str, command, fg: str = MUTED) -> tk.Button:
