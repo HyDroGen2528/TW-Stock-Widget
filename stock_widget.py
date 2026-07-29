@@ -143,8 +143,10 @@ def parse_quote(message: dict) -> Quote | None:
         return None
     code = "TAIEX" if raw_code == "T00" else raw_code
     previous = number(message.get("y"))
+    # z is the current trade; pz is the previous trade. y is yesterday's close,
+    # not the current price, so never use it as a live-price fallback.
     price = next(
-        (candidate for candidate in (number(message.get("z")), number(message.get("pz")), previous) if candidate is not None),
+        (candidate for candidate in (number(message.get("z")), number(message.get("pz"))) if candidate is not None),
         None,
     )
     if price is None or previous is None or previous <= 0:
@@ -363,7 +365,7 @@ class StockWidget:
         if error:
             self.status.configure(text=f"更新失敗：{error}", fg=UP)
         else:
-            self.quotes = quotes
+            self.quotes.update(quotes)
             missing = len(self.settings["items"]) - len(quotes)
             latest = max((f"{q.trade_date} {q.trade_time}" for q in quotes.values()), default="無資料")
             suffix = f" · {missing} 個代號無資料" if missing else ""
