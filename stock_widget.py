@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - Windows target
 
 
 APP_NAME = "台股提醒"
-APP_VERSION = "v1.0.7"
+APP_VERSION = "v1.0.8"
 API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
 SETTINGS_PATH = Path(os.getenv("TWSTOCKWIDGET_SETTINGS_PATH", Path(os.getenv("LOCALAPPDATA", Path.home())) / "TWStockWidget" / "settings.json"))
