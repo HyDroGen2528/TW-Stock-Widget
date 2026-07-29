@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+可攜版/TWStockWidget.exe
+可攜版/TWStockWidget-portable.zip
+可攜版/settings.json
+可攜版/.build/
+*.spec
