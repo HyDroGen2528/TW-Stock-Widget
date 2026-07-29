@@ -45,6 +45,7 @@ class Quote:
     change_pct: float
     trade_date: str
     trade_time: str
+    has_current_price: bool = True
 
 
 def default_settings() -> dict:
@@ -137,7 +138,7 @@ def number(value: object) -> float | None:
         return None
 
 
-def parse_quote(message: dict) -> Quote | None:
+def parse_quote(message: dict, *, use_previous_close: bool = False) -> Quote | None:
     raw_code = str(message.get("c", "")).upper()
     if not raw_code:
         return None
@@ -149,6 +150,9 @@ def parse_quote(message: dict) -> Quote | None:
         (candidate for candidate in (number(message.get("z")), number(message.get("pz"))) if candidate is not None),
         None,
     )
+    has_current_price = price is not None
+    if price is None and use_previous_close:
+        price = previous
     if price is None or previous is None or previous <= 0:
         return None
     return Quote(
@@ -157,9 +161,10 @@ def parse_quote(message: dict) -> Quote | None:
         exchange=str(message.get("ex") or "tse"),
         price=price,
         previous_close=previous,
-        change_pct=(price - previous) / previous * 100,
+        change_pct=(price - previous) / previous * 100 if has_current_price else 0.0,
         trade_date=str(message.get("d") or ""),
         trade_time=str(message.get("t") or message.get("%") or ""),
+        has_current_price=has_current_price,
     )
 
 
@@ -184,7 +189,7 @@ def twse_ssl_context() -> ssl.SSLContext:
 
 
 
-def fetch_quotes(codes: list[str]) -> dict[str, Quote]:
+def fetch_quotes(codes: list[str], previous_quotes: dict[str, Quote] | None = None) -> dict[str, Quote]:
     channels = query_channels(codes)
     params = urllib.parse.urlencode(
         {"ex_ch": "|".join(channels), "json": "1", "delay": "0"}
@@ -200,10 +205,23 @@ def fetch_quotes(codes: list[str]) -> dict[str, Quote]:
 
     wanted = {normalize_code(code) for code in codes}
     quotes: dict[str, Quote] = {}
+    messages: dict[str, dict] = {}
     for message in payload.get("msgArray", []):
+        raw_code = str(message.get("c", "")).upper()
+        code = "TAIEX" if raw_code == "T00" else raw_code
+        if code in wanted:
+            messages[code] = message
         quote = parse_quote(message)
         if quote and quote.code in wanted:
             quotes[quote.code] = quote
+
+    for code in wanted - quotes.keys():
+        if previous_quotes and code in previous_quotes:
+            quotes[code] = previous_quotes[code]
+        elif code in messages:
+            quote = parse_quote(messages[code], use_previous_close=True)
+            if quote:
+                quotes[code] = quote
     return quotes
 
 
@@ -331,10 +349,10 @@ class StockWidget:
             tk.Label(card, text=name, bg=CARD, fg=MUTED, font=("Microsoft JhengHei UI", 8), anchor="w").place(x=11, y=30, width=132)
 
             if quote:
-                color = UP if quote.change_pct > 0 else DOWN if quote.change_pct < 0 else MUTED
+                color = MUTED if not quote.has_current_price else UP if quote.change_pct > 0 else DOWN if quote.change_pct < 0 else MUTED
                 tk.Label(card, text=price_text(quote.price), bg=CARD, fg=TEXT, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
-                sign = "+" if quote.change_pct > 0 else ""
-                tk.Label(card, text=f"{sign}{quote.change_pct:.2f}%", bg=CARD, fg=color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
+                change_text = "—" if not quote.has_current_price else f"{quote.change_pct:+.2f}%"
+                tk.Label(card, text=change_text, bg=CARD, fg=color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
             else:
                 tk.Label(card, text="—", bg=CARD, fg=MUTED, font=("Segoe UI", 13), anchor="e").place(x=140, y=7, width=198)
 
@@ -351,7 +369,7 @@ class StockWidget:
 
         def worker() -> None:
             try:
-                result = fetch_quotes(codes)
+                result = fetch_quotes(codes, self.quotes)
                 self.root.after(0, lambda: self.finish_refresh(result, None))
             except Exception as exc:
                 message = str(exc)
@@ -384,7 +402,7 @@ class StockWidget:
         for item in self.settings["items"]:
             quote = self.quotes.get(item["code"])
             threshold = item["threshold"]
-            if not quote or not threshold_reached(quote.change_pct, threshold):
+            if not quote or not quote.has_current_price or not threshold_reached(quote.change_pct, threshold):
                 continue
             key = (quote.code, quote.trade_date, threshold)
             if key in self.alerted:

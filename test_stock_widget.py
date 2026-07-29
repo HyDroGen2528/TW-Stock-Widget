@@ -49,6 +49,11 @@ class StockWidgetTest(unittest.TestCase):
     def test_missing_current_trade_does_not_become_zero_change(self):
         message = {**SAMPLE, "z": "-", "pz": "-"}
         self.assertIsNone(parse_quote(message))
+        quote = parse_quote(message, use_previous_close=True)
+        self.assertIsNotNone(quote)
+        self.assertFalse(quote.has_current_price)
+        self.assertEqual(quote.price, 2350.0)
+        self.assertEqual(quote.change_pct, 0.0)
 
     def test_signed_thresholds_and_disabled_zero(self):
         self.assertTrue(threshold_reached(-3.2, -3))
