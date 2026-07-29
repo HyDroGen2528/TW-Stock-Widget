@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from http.client import RemoteDisconnected
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import ssl
 import threading
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -370,12 +372,19 @@ class StockWidget:
 
         def worker() -> None:
             try:
-                result = fetch_quotes(codes)
-                for _ in range(2):
-                    if all(result.get(code) and result[code].has_current_price for code in codes):
+                for attempt in range(3):
+                    try:
+                        result = fetch_quotes(codes)
+                        for _ in range(2):
+                            if all(result.get(code) and result[code].has_current_price for code in codes):
+                                break
+                            time.sleep(0.25)
+                            result = fetch_quotes(codes)
                         break
-                    time.sleep(0.25)
-                    result = fetch_quotes(codes)
+                    except (ConnectionError, RemoteDisconnected, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+                        if attempt == 2:
+                            raise
+                        time.sleep(0.25)
                 self.root.after(0, lambda: self.finish_refresh(result, None))
             except Exception as exc:
                 message = str(exc)
