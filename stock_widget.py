@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - Windows target
 
 
 APP_NAME = "台股提醒"
-APP_VERSION = "v1.1.1"
+APP_VERSION = "v1.1.2"
 API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
 TAIFEX_REALTIME_DAY_URL = "https://www.taifex.com.tw/eventTaifexTradingCenter/api/index/futureQuoteRealTime"
@@ -314,6 +314,18 @@ def price_text(value: float) -> str:
     return f"{value:,.2f}"
 
 
+def quote_change_text(quote: Quote, show_points: bool) -> str:
+    if not quote.has_current_price:
+        return "—"
+    if show_points:
+        return f"{quote.price - quote.previous_close:+,.2f}點"
+    return f"{quote.change_pct:+.2f}%"
+
+
+def futures_change_text(futures: FuturesSummary, show_points: bool) -> str:
+    return f"{futures.change_points:+,.0f}點" if show_points else f"{futures.change_pct:+.2f}%"
+
+
 class StockWidget:
     def __init__(self, root: tk.Tk, *, auto_refresh: bool = True) -> None:
         self.root = root
@@ -324,6 +336,8 @@ class StockWidget:
         self.last_futures_fetch = 0.0
         self.alerted: set[tuple[str, str, float]] = set()
         self.last_notification = ""
+        self.show_change_points = False
+        self.change_display_job: str | None = None
         self.refreshing = False
         self.refresh_job: str | None = None
         self.drag_offset = (0, 0)
@@ -339,6 +353,7 @@ class StockWidget:
         self.render_rows()
         if auto_refresh:
             root.after(150, self.refresh)
+            self.change_display_job = root.after(3000, self.toggle_change_display)
 
     def _build_ui(self) -> None:
         c = self.theme
@@ -439,7 +454,7 @@ class StockWidget:
             if quote:
                 color = c["muted"] if not quote.has_current_price else c["up"] if quote.change_pct > 0 else c["down"] if quote.change_pct < 0 else c["muted"]
                 tk.Label(card, text=price_text(quote.price), bg=c["card"], fg=color, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
-                change_text = "—" if not quote.has_current_price else f"{quote.change_pct:+.2f}%"
+                change_text = quote_change_text(quote, self.show_change_points)
                 tk.Label(card, text=change_text, bg=c["card"], fg=color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
             else:
                 tk.Label(card, text="—", bg=c["card"], fg=c["muted"], font=("Segoe UI", 13), anchor="e").place(x=140, y=7, width=198)
@@ -461,7 +476,7 @@ class StockWidget:
         if futures:
             price_color = c["up"] if futures.change_pct > 0 else c["down"] if futures.change_pct < 0 else c["muted"]
             tk.Label(card, text=f"{futures.last:,.0f}", bg=c["card"], fg=price_color, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
-            tk.Label(card, text=f"{futures.change_points:+,.0f}點", bg=c["card"], fg=price_color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
+            tk.Label(card, text=futures_change_text(futures, self.show_change_points), bg=c["card"], fg=price_color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
             detail = f"參 {futures.reference:,.0f} · 高 {futures.high:,.0f} · 低 {futures.low:,.0f}"
             tk.Label(card, text=detail, bg=c["card"], fg=c["muted"], font=("Segoe UI", 8), anchor="e").place(x=190, y=33, width=148)
         else:
@@ -523,6 +538,12 @@ class StockWidget:
         if self.refresh_job:
             self.root.after_cancel(self.refresh_job)
         self.refresh_job = self.root.after(self.settings["refresh_seconds"] * 1000, self.refresh)
+
+    def toggle_change_display(self) -> None:
+        self.show_change_points = not self.show_change_points
+        self.render_rows()
+        if self.root.winfo_exists():
+            self.change_display_job = self.root.after(3000, self.toggle_change_display)
 
     def notify_reached_thresholds(self) -> None:
         notices: list[str] = []
@@ -675,6 +696,8 @@ class StockWidget:
     def close(self) -> None:
         self.settings["window"] = {"x": self.root.winfo_x(), "y": self.root.winfo_y()}
         try:
+            if self.change_display_job:
+                self.root.after_cancel(self.change_display_job)
             save_settings(self.settings)
         finally:
             self.root.destroy()

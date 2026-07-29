@@ -13,6 +13,7 @@ from stock_widget import (
     normalize_code,
     parse_futures_realtime,
     parse_quote,
+    quote_change_text,
     query_channels,
     save_settings,
     threshold_reached,
@@ -47,6 +48,8 @@ class StockWidgetTest(unittest.TestCase):
         self.assertIsNotNone(quote)
         self.assertEqual(quote.code, "2330")
         self.assertAlmostEqual(quote.change_pct, -2.9787234)
+        self.assertEqual(quote_change_text(quote, False), "-2.98%")
+        self.assertEqual(quote_change_text(quote, True), "-70.00點")
 
     def test_futures_realtime_parses_current_change_points(self):
         summary = parse_futures_realtime(
