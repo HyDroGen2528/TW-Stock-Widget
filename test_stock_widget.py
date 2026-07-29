@@ -11,6 +11,7 @@ from stock_widget import (
     clean_settings,
     load_settings,
     normalize_code,
+    parse_futures_summary,
     parse_quote,
     query_channels,
     save_settings,
@@ -46,6 +47,17 @@ class StockWidgetTest(unittest.TestCase):
         self.assertIsNotNone(quote)
         self.assertEqual(quote.code, "2330")
         self.assertAlmostEqual(quote.change_pct, -2.9787234)
+
+    def test_futures_summary_combines_day_and_night_sessions(self):
+        summary = parse_futures_summary(
+            [
+                {"Date": "20260728", "Contract": "TX", "ContractMonth(Week)": "202608", "High": "42627", "Low": "41516", "Last": "41613", "%": "-5.17%", "Volume": "81786", "TradingSession": "一般"},
+                {"Date": "20260728", "Contract": "TX", "ContractMonth(Week)": "202608", "High": "44241", "Low": "42787", "Last": "43172", "%": "-1.61%", "Volume": "53743", "TradingSession": "盤後"},
+            ]
+        )
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.volatility_points, 2725)
+        self.assertEqual(summary.last, 43172)
 
     def test_missing_current_trade_does_not_become_zero_change(self):
         message = {**SAMPLE, "z": "-", "pz": "-"}

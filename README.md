@@ -5,6 +5,7 @@ Windows 桌面股價小工具，顯示臺灣加權指數、上市與上櫃股票
 ## 功能
 
 - 顯示 TAIEX、上市（TWSE）與上櫃（OTC）股票即時行情。
+- 顯示加權指數下方的臺指期 TX 全日波動，整合日盤與夜盤的最高、最低價。
 - 支援正向與負向漲跌幅門檻，例如 `+5` 代表上漲 5% 提醒，`-3` 代表下跌 3% 提醒。
 - 可設定更新間隔（10 至 600 秒）、監控代碼、門檻與視窗置頂。
 - 支援深色模式；現價與漲跌幅採漲紅、跌綠、持平灰顯示。
@@ -18,6 +19,12 @@ Windows 桌面股價小工具，顯示臺灣加權指數、上市與上櫃股票
 
 `https://mis.twse.com.tw/stock/api/getStockInfo.jsp`
 
+臺指期全日波動來自臺灣期貨交易所 OpenAPI：
+
+`https://openapi.taifex.com.tw/v1/DailyMarketReportFut`
+
+程式會選取 TX 近月主力契約，合併同一交易日的日盤與盤後交易資料，計算最高價減最低價的全日波動點數；同時顯示最新成交價、最高價與最低價。期交所盤後交易資料依交易量歸屬日提供。
+
 程式會依代碼查詢：
 
 - TAIEX：`tse_t00.tw`
@@ -30,7 +37,7 @@ Python 3.14 的 TLS 嚴格驗證會拒絕 TWSE 憑證鏈缺少的 SKI extension�
 
 ## 程式內容
 
-- `stock_widget.py`：Tkinter 介面、設定清理、TWSE API 請求、行情解析、漲跌幅判斷與通知。
+- `stock_widget.py`：Tkinter 介面、設定清理、TWSE/TAIFEX API 請求、行情解析、臺指期波動計算、漲跌幅判斷與通知。
 - `test_stock_widget.py`：代碼正規化、行情解析、門檻、TLS 與設定保存測試。
 - `start_widget.cmd`：以 `pythonw.exe` 啟動原始碼版本。
 - `可攜版/`：PyInstaller 建立的 Windows 可攜版執行檔與說明。

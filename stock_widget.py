@@ -24,9 +24,10 @@ except ImportError:  # pragma: no cover - Windows target
 
 
 APP_NAME = "台股提醒"
-APP_VERSION = "v1.0.8"
+APP_VERSION = "v1.0.9"
 API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
+TAIFEX_API_URL = "https://openapi.taifex.com.tw/v1/DailyMarketReportFut"
 SETTINGS_PATH = Path(os.getenv("TWSTOCKWIDGET_SETTINGS_PATH", Path(os.getenv("LOCALAPPDATA", Path.home())) / "TWStockWidget" / "settings.json"))
 
 LIGHT_THEME = {
@@ -66,6 +67,18 @@ class Quote:
     trade_date: str
     trade_time: str
     has_current_price: bool = True
+
+
+@dataclass(frozen=True)
+class FuturesSummary:
+    contract_month: str
+    last: float
+    change_pct: float
+    high: float
+    low: float
+    volatility_points: float
+    volatility_pct: float
+    trade_date: str
 
 
 def default_settings() -> dict:
@@ -247,6 +260,56 @@ def fetch_quotes(codes: list[str], previous_quotes: dict[str, Quote] | None = No
     return quotes
 
 
+def parse_futures_summary(rows: list[dict]) -> FuturesSummary | None:
+    rows = [row for row in rows if row.get("Contract") == "TX" and row.get("Date")]
+    if not rows:
+        return None
+    trade_date = max(str(row["Date"]) for row in rows)
+    rows = [row for row in rows if str(row["Date"]) == trade_date]
+
+    contracts: dict[str, list[dict]] = {}
+    for row in rows:
+        contracts.setdefault(str(row.get("ContractMonth(Week)") or ""), []).append(row)
+    contract_month, rows = max(
+        contracts.items(),
+        key=lambda item: sum(number(row.get("Volume")) or 0 for row in item[1]),
+    )
+    highs = [number(row.get("High")) for row in rows]
+    lows = [number(row.get("Low")) for row in rows]
+    high_values = [value for value in highs if value is not None]
+    low_values = [value for value in lows if value is not None]
+    latest = max(rows, key=lambda row: str(row.get("TradingSession")) == "盤後")
+    last = number(latest.get("Last"))
+    if not contract_month or last is None or not high_values or not low_values:
+        return None
+    high, low = max(high_values), min(low_values)
+    change_text = str(latest.get("%", "")).replace("%", "")
+    change_pct = number(change_text) or 0.0
+    volatility_points = high - low
+    return FuturesSummary(
+        contract_month=contract_month,
+        last=last,
+        change_pct=change_pct,
+        high=high,
+        low=low,
+        volatility_points=volatility_points,
+        volatility_pct=volatility_points / low * 100 if low > 0 else 0.0,
+        trade_date=trade_date,
+    )
+
+
+def fetch_futures_summary() -> FuturesSummary | None:
+    request = urllib.request.Request(
+        TAIFEX_API_URL,
+        headers={"User-Agent": "Mozilla/5.0 TWStockWidget/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=10, context=twse_ssl_context()) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, list):
+        raise RuntimeError("期交所回傳格式錯誤")
+    return parse_futures_summary(payload)
+
+
 def threshold_reached(change_pct: float, threshold: float) -> bool:
     if threshold == 0:
         return False
@@ -264,6 +327,8 @@ class StockWidget:
         self.settings = load_settings()
         self.theme = theme_for(self.settings["dark_mode"])
         self.quotes: dict[str, Quote] = {}
+        self.futures: FuturesSummary | None = None
+        self.last_futures_fetch = 0.0
         self.alerted: set[tuple[str, str, float]] = set()
         self.last_notification = ""
         self.refreshing = False
@@ -388,6 +453,26 @@ class StockWidget:
 
             threshold_text = "通知關閉" if threshold == 0 else f"門檻 {threshold:+g}%"
             tk.Label(card, text=threshold_text, bg=c["card"], fg=c["muted"], font=("Microsoft JhengHei UI", 8), anchor="e").place(x=210, y=33, width=128)
+            if code == "TAIEX":
+                self.render_futures_row()
+
+    def render_futures_row(self) -> None:
+        c = self.theme
+        futures = self.futures
+        card = tk.Frame(self.rows, bg=c["card"], height=56, highlightbackground=c["border"], highlightthickness=1)
+        card.pack(fill="x", pady=(0, 7))
+        card.pack_propagate(False)
+        name = f"臺指期 {futures.contract_month}" if futures else "臺指期全日波動"
+        tk.Label(card, text="TX", bg=c["card"], fg=c["text"], font=("Segoe UI", 10, "bold"), anchor="w").place(x=11, y=7, width=78)
+        tk.Label(card, text=name, bg=c["card"], fg=c["muted"], font=("Microsoft JhengHei UI", 8), anchor="w").place(x=11, y=30, width=132)
+        if futures:
+            price_color = c["up"] if futures.change_pct > 0 else c["down"] if futures.change_pct < 0 else c["muted"]
+            tk.Label(card, text=f"{futures.volatility_points:,.0f}點", bg=c["card"], fg=c["accent"], font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
+            tk.Label(card, text=f"現 {futures.last:,.0f}", bg=c["card"], fg=price_color, font=("Segoe UI", 9, "bold"), anchor="e").place(x=250, y=8, width=88)
+            detail = f"高 {futures.high:,.0f} · 低 {futures.low:,.0f}"
+            tk.Label(card, text=detail, bg=c["card"], fg=c["muted"], font=("Segoe UI", 8), anchor="e").place(x=190, y=33, width=148)
+        else:
+            tk.Label(card, text="—", bg=c["card"], fg=c["muted"], font=("Segoe UI", 13), anchor="e").place(x=140, y=7, width=198)
 
     def refresh(self) -> None:
         if self.refreshing:
@@ -404,19 +489,28 @@ class StockWidget:
                 except (ConnectionError, RemoteDisconnected, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
                     time.sleep(2)
                     result = fetch_quotes(codes)
-                self.root.after(0, lambda: self.finish_refresh(result, None))
+                futures = self.futures
+                if futures is None or time.monotonic() - self.last_futures_fetch >= 30:
+                    try:
+                        futures = fetch_futures_summary()
+                    except Exception:
+                        futures = self.futures
+                    self.last_futures_fetch = time.monotonic()
+                self.root.after(0, lambda: self.finish_refresh(result, futures, None))
             except Exception as exc:
                 message = str(exc)
-                self.root.after(0, lambda: self.finish_refresh({}, message))
+                self.root.after(0, lambda: self.finish_refresh({}, self.futures, message))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_refresh(self, quotes: dict[str, Quote], error: str | None) -> None:
+    def finish_refresh(self, quotes: dict[str, Quote], futures: FuturesSummary | None, error: str | None) -> None:
         self.refreshing = False
         self.refresh_button.configure(state="normal")
         if error:
             self.status.configure(text=f"更新失敗：{error}", fg=self.theme["up"])
         else:
+            if futures:
+                self.futures = futures
             self.quotes.update(
                 {
                     code: quote
