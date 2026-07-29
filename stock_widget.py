@@ -24,10 +24,11 @@ except ImportError:  # pragma: no cover - Windows target
 
 
 APP_NAME = "台股提醒"
-APP_VERSION = "v1.0.9"
+APP_VERSION = "v1.1.0"
 API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
-TAIFEX_API_URL = "https://openapi.taifex.com.tw/v1/DailyMarketReportFut"
+TAIFEX_REALTIME_DAY_URL = "https://www.taifex.com.tw/eventTaifexTradingCenter/api/index/futureQuoteRealTime"
+TAIFEX_REALTIME_NIGHT_URL = "https://www.taifex.com.tw/eventTaifexTradingCenter/api/index/futureQuoteRealTimeNight"
 SETTINGS_PATH = Path(os.getenv("TWSTOCKWIDGET_SETTINGS_PATH", Path(os.getenv("LOCALAPPDATA", Path.home())) / "TWStockWidget" / "settings.json"))
 
 LIGHT_THEME = {
@@ -71,14 +72,12 @@ class Quote:
 
 @dataclass(frozen=True)
 class FuturesSummary:
-    contract_month: str
     last: float
+    change_points: float
     change_pct: float
     high: float
     low: float
-    volatility_points: float
-    volatility_pct: float
-    trade_date: str
+    reference: float
 
 
 def default_settings() -> dict:
@@ -167,6 +166,8 @@ def save_settings(settings: dict, path: Path = SETTINGS_PATH) -> None:
 
 def number(value: object) -> float | None:
     try:
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
         result = float(value)
         return result if math.isfinite(result) else None
     except (TypeError, ValueError):
@@ -260,54 +261,46 @@ def fetch_quotes(codes: list[str], previous_quotes: dict[str, Quote] | None = No
     return quotes
 
 
-def parse_futures_summary(rows: list[dict]) -> FuturesSummary | None:
-    rows = [row for row in rows if row.get("Contract") == "TX" and row.get("Date")]
-    if not rows:
+def parse_futures_realtime(payload: dict) -> FuturesSummary | None:
+    if payload.get("isNoData") or number(payload.get("quote")) is None:
         return None
-    trade_date = max(str(row["Date"]) for row in rows)
-    rows = [row for row in rows if str(row["Date"]) == trade_date]
-
-    contracts: dict[str, list[dict]] = {}
-    for row in rows:
-        contracts.setdefault(str(row.get("ContractMonth(Week)") or ""), []).append(row)
-    contract_month, rows = max(
-        contracts.items(),
-        key=lambda item: sum(number(row.get("Volume")) or 0 for row in item[1]),
-    )
-    highs = [number(row.get("High")) for row in rows]
-    lows = [number(row.get("Low")) for row in rows]
-    high_values = [value for value in highs if value is not None]
-    low_values = [value for value in lows if value is not None]
-    latest = max(rows, key=lambda row: str(row.get("TradingSession")) == "盤後")
-    last = number(latest.get("Last"))
-    if not contract_month or last is None or not high_values or not low_values:
+    last = number(payload.get("quote"))
+    reference = number(payload.get("refer"))
+    high = number(payload.get("highest"))
+    low = number(payload.get("lowest"))
+    if last is None or reference is None or high is None or low is None:
         return None
-    high, low = max(high_values), min(low_values)
-    change_text = str(latest.get("%", "")).replace("%", "")
-    change_pct = number(change_text) or 0.0
-    volatility_points = high - low
+    change_match = re.search(r"[-+]?[,\d.]+", str(payload.get("change", "")))
+    change_points = number(change_match.group(0)) if change_match else last - reference
+    pct_match = re.search(r"\(([-+]?[,\d.]+)%\)", str(payload.get("change", "")))
+    change_pct = number(pct_match.group(1)) if pct_match else (last - reference) / reference * 100
     return FuturesSummary(
-        contract_month=contract_month,
         last=last,
+        change_points=change_points or 0.0,
         change_pct=change_pct,
         high=high,
         low=low,
-        volatility_points=volatility_points,
-        volatility_pct=volatility_points / low * 100 if low > 0 else 0.0,
-        trade_date=trade_date,
+        reference=reference,
     )
 
 
 def fetch_futures_summary() -> FuturesSummary | None:
+    local_minutes = time.localtime().tm_hour * 60 + time.localtime().tm_min
+    url = TAIFEX_REALTIME_DAY_URL if 5 * 60 + 1 <= local_minutes <= 14 * 60 + 59 else TAIFEX_REALTIME_NIGHT_URL
     request = urllib.request.Request(
-        TAIFEX_API_URL,
-        headers={"User-Agent": "Mozilla/5.0 TWStockWidget/1.0"},
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 TWStockWidget/1.0",
+            "Content-Type": "application/json",
+            "Referer": "https://www.taifex.com.tw/eventTaifexTradingCenter/cht/index.do",
+        },
+        method="POST",
     )
     with urllib.request.urlopen(request, timeout=10, context=twse_ssl_context()) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, list):
+    if not isinstance(payload, dict):
         raise RuntimeError("期交所回傳格式錯誤")
-    return parse_futures_summary(payload)
+    return parse_futures_realtime(payload)
 
 
 def threshold_reached(change_pct: float, threshold: float) -> bool:
@@ -462,14 +455,14 @@ class StockWidget:
         card = tk.Frame(self.rows, bg=c["card"], height=56, highlightbackground=c["border"], highlightthickness=1)
         card.pack(fill="x", pady=(0, 7))
         card.pack_propagate(False)
-        name = f"臺指期 {futures.contract_month}" if futures else "臺指期全日波動"
+        name = "臺指期即時漲跌"
         tk.Label(card, text="TX", bg=c["card"], fg=c["text"], font=("Segoe UI", 10, "bold"), anchor="w").place(x=11, y=7, width=78)
         tk.Label(card, text=name, bg=c["card"], fg=c["muted"], font=("Microsoft JhengHei UI", 8), anchor="w").place(x=11, y=30, width=132)
         if futures:
             price_color = c["up"] if futures.change_pct > 0 else c["down"] if futures.change_pct < 0 else c["muted"]
-            tk.Label(card, text=f"{futures.volatility_points:,.0f}點", bg=c["card"], fg=c["accent"], font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
+            tk.Label(card, text=f"{futures.change_points:+,.0f}點", bg=c["card"], fg=price_color, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
             tk.Label(card, text=f"現 {futures.last:,.0f}", bg=c["card"], fg=price_color, font=("Segoe UI", 9, "bold"), anchor="e").place(x=250, y=8, width=88)
-            detail = f"高 {futures.high:,.0f} · 低 {futures.low:,.0f}"
+            detail = f"參 {futures.reference:,.0f} · 高 {futures.high:,.0f} · 低 {futures.low:,.0f}"
             tk.Label(card, text=detail, bg=c["card"], fg=c["muted"], font=("Segoe UI", 8), anchor="e").place(x=190, y=33, width=148)
         else:
             tk.Label(card, text="—", bg=c["card"], fg=c["muted"], font=("Segoe UI", 13), anchor="e").place(x=140, y=7, width=198)
