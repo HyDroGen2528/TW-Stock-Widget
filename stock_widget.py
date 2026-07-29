@@ -7,6 +7,7 @@ import os
 import re
 import ssl
 import threading
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -369,7 +370,12 @@ class StockWidget:
 
         def worker() -> None:
             try:
-                result = fetch_quotes(codes, self.quotes)
+                result = fetch_quotes(codes)
+                for _ in range(2):
+                    if all(result.get(code) and result[code].has_current_price for code in codes):
+                        break
+                    time.sleep(0.25)
+                    result = fetch_quotes(codes)
                 self.root.after(0, lambda: self.finish_refresh(result, None))
             except Exception as exc:
                 message = str(exc)
@@ -383,7 +389,13 @@ class StockWidget:
         if error:
             self.status.configure(text=f"更新失敗：{error}", fg=UP)
         else:
-            self.quotes.update(quotes)
+            self.quotes.update(
+                {
+                    code: quote
+                    for code, quote in quotes.items()
+                    if quote.has_current_price or code not in self.quotes
+                }
+            )
             missing = len(self.settings["items"]) - len(quotes)
             latest = max((f"{q.trade_date} {q.trade_time}" for q in quotes.values()), default="無資料")
             suffix = f" · {missing} 個代號無資料" if missing else ""
