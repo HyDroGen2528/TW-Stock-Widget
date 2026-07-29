@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - Windows target
 
 
 APP_NAME = "台股提醒"
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.1.1"
 API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
 TAIFEX_REALTIME_DAY_URL = "https://www.taifex.com.tw/eventTaifexTradingCenter/api/index/futureQuoteRealTime"
@@ -460,8 +460,8 @@ class StockWidget:
         tk.Label(card, text=name, bg=c["card"], fg=c["muted"], font=("Microsoft JhengHei UI", 8), anchor="w").place(x=11, y=30, width=132)
         if futures:
             price_color = c["up"] if futures.change_pct > 0 else c["down"] if futures.change_pct < 0 else c["muted"]
-            tk.Label(card, text=f"{futures.change_points:+,.0f}點", bg=c["card"], fg=price_color, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
-            tk.Label(card, text=f"現 {futures.last:,.0f}", bg=c["card"], fg=price_color, font=("Segoe UI", 9, "bold"), anchor="e").place(x=250, y=8, width=88)
+            tk.Label(card, text=f"{futures.last:,.0f}", bg=c["card"], fg=price_color, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
+            tk.Label(card, text=f"{futures.change_points:+,.0f}點", bg=c["card"], fg=price_color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
             detail = f"參 {futures.reference:,.0f} · 高 {futures.high:,.0f} · 低 {futures.low:,.0f}"
             tk.Label(card, text=detail, bg=c["card"], fg=c["muted"], font=("Segoe UI", 8), anchor="e").place(x=190, y=33, width=148)
         else:
