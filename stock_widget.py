@@ -29,14 +29,30 @@ API_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 API_REFERER = "https://mis.twse.com.tw/stock/index.jsp"
 SETTINGS_PATH = Path(os.getenv("TWSTOCKWIDGET_SETTINGS_PATH", Path(os.getenv("LOCALAPPDATA", Path.home())) / "TWStockWidget" / "settings.json"))
 
-BG = "#F4F6F8"
-CARD = "#FFFFFF"
-TEXT = "#17202A"
-MUTED = "#73808C"
-UP = "#D94B4B"
-DOWN = "#14866D"
-ACCENT = "#356AE6"
-BORDER = "#E4E8ED"
+LIGHT_THEME = {
+    "bg": "#F4F6F8",
+    "card": "#FFFFFF",
+    "text": "#17202A",
+    "muted": "#73808C",
+    "up": "#D94B4B",
+    "down": "#14866D",
+    "accent": "#356AE6",
+    "border": "#E4E8ED",
+}
+DARK_THEME = {
+    "bg": "#171A1F",
+    "card": "#232830",
+    "text": "#F2F4F7",
+    "muted": "#9BA6B2",
+    "up": "#FF5B5B",
+    "down": "#3BC98A",
+    "accent": "#5B8CFF",
+    "border": "#38414D",
+}
+
+
+def theme_for(dark_mode: bool) -> dict[str, str]:
+    return DARK_THEME if dark_mode else LIGHT_THEME
 
 
 @dataclass(frozen=True)
@@ -56,6 +72,7 @@ def default_settings() -> dict:
     return {
         "refresh_seconds": 30,
         "always_on_top": True,
+        "dark_mode": False,
         "window": {"x": 24, "y": 80},
         "items": [
             {"code": "TAIEX", "threshold": -2.0},
@@ -113,6 +130,7 @@ def clean_settings(raw: object) -> dict:
     return {
         "refresh_seconds": refresh,
         "always_on_top": bool(raw.get("always_on_top", True)),
+        "dark_mode": bool(raw.get("dark_mode", False)),
         "window": {"x": x, "y": y},
         "items": [{"code": code, "threshold": threshold} for code, threshold in items.items()],
     }
@@ -244,14 +262,16 @@ class StockWidget:
     def __init__(self, root: tk.Tk, *, auto_refresh: bool = True) -> None:
         self.root = root
         self.settings = load_settings()
+        self.theme = theme_for(self.settings["dark_mode"])
         self.quotes: dict[str, Quote] = {}
         self.alerted: set[tuple[str, str, float]] = set()
+        self.last_notification = ""
         self.refreshing = False
         self.refresh_job: str | None = None
         self.drag_offset = (0, 0)
 
         root.title(APP_NAME)
-        root.configure(bg=BG)
+        root.configure(bg=self.theme["bg"])
         root.overrideredirect(True)
         root.attributes("-topmost", self.settings["always_on_top"])
         root.bind("<Escape>", lambda _event: self.close())
@@ -263,56 +283,59 @@ class StockWidget:
             root.after(150, self.refresh)
 
     def _build_ui(self) -> None:
-        shell = tk.Frame(self.root, bg=BG, highlightbackground=BORDER, highlightthickness=1)
+        c = self.theme
+        shell = tk.Frame(self.root, bg=c["bg"], highlightbackground=c["border"], highlightthickness=1)
         shell.pack(fill="both", expand=True)
 
-        header = tk.Frame(shell, bg=CARD, height=48)
+        header = tk.Frame(shell, bg=c["card"], height=48)
         header.pack(fill="x")
         header.pack_propagate(False)
         header.bind("<ButtonPress-1>", self.start_drag)
         header.bind("<B1-Motion>", self.drag)
 
-        title = tk.Label(header, text="台股提醒", bg=CARD, fg=TEXT, font=("Microsoft JhengHei UI", 13, "bold"))
+        title = tk.Label(header, text="台股提醒", bg=c["card"], fg=c["text"], font=("Microsoft JhengHei UI", 13, "bold"))
         title.pack(side="left", padx=(14, 4))
         title.bind("<ButtonPress-1>", self.start_drag)
         title.bind("<B1-Motion>", self.drag)
-        tk.Label(header, text="TWSE", bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(side="left", pady=(5, 0))
+        tk.Label(header, text="TWSE", bg=c["card"], fg=c["muted"], font=("Segoe UI", 8)).pack(side="left", pady=(5, 0))
 
         self._header_button(header, "×", self.close, "#A33A3A").pack(side="right", padx=(0, 8))
         self._header_button(header, "⚙", self.open_settings).pack(side="right")
         self.refresh_button = self._header_button(header, "↻", self.refresh)
         self.refresh_button.pack(side="right")
 
-        list_shell = tk.Frame(shell, bg=BG)
+        list_shell = tk.Frame(shell, bg=c["bg"])
         list_shell.pack(fill="both", expand=True, padx=(8, 4), pady=(8, 4))
-        self.canvas = tk.Canvas(list_shell, bg=BG, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(list_shell, bg=c["bg"], highlightthickness=0, bd=0)
         scrollbar = ttk.Scrollbar(list_shell, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         self.canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        self.rows = tk.Frame(self.canvas, bg=BG)
+        self.rows = tk.Frame(self.canvas, bg=c["bg"])
         self.canvas_window = self.canvas.create_window((0, 0), window=self.rows, anchor="nw")
         self.rows.bind("<Configure>", lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(self.canvas_window, width=event.width))
         self.canvas.bind_all("<MouseWheel>", self.mouse_wheel)
 
-        footer = tk.Frame(shell, bg=BG, height=30)
+        footer = tk.Frame(shell, bg=c["bg"], height=30)
         footer.pack(fill="x", padx=10, pady=(0, 5))
         footer.pack_propagate(False)
-        self.status = tk.Label(footer, text="等待更新", bg=BG, fg=MUTED, anchor="w", font=("Microsoft JhengHei UI", 8))
+        self.status = tk.Label(footer, text="等待更新", bg=c["bg"], fg=c["muted"], anchor="w", font=("Microsoft JhengHei UI", 8))
         self.status.pack(side="left", fill="both", expand=True)
-        tk.Label(footer, text=APP_VERSION, bg=BG, fg=MUTED, anchor="e", font=("Segoe UI", 8)).pack(side="right")
+        self.last_notice = tk.Label(footer, text=self.last_notification, bg=c["bg"], fg=c["muted"], anchor="e", font=("Microsoft JhengHei UI", 8))
+        self.last_notice.pack(side="right", padx=(8, 8))
+        tk.Label(footer, text=APP_VERSION, bg=c["bg"], fg=c["muted"], anchor="e", font=("Segoe UI", 8)).pack(side="right")
 
-    @staticmethod
-    def _header_button(parent: tk.Widget, text: str, command, fg: str = MUTED) -> tk.Button:
+    def _header_button(self, parent: tk.Widget, text: str, command, fg: str | None = None) -> tk.Button:
+        c = self.theme
         return tk.Button(
             parent,
             text=text,
             command=command,
-            bg=CARD,
-            fg=fg,
-            activebackground=BG,
-            activeforeground=TEXT,
+            bg=c["card"],
+            fg=fg or c["muted"],
+            activebackground=c["bg"],
+            activeforeground=c["text"],
             relief="flat",
             bd=0,
             width=3,
@@ -339,6 +362,7 @@ class StockWidget:
             self.canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def render_rows(self) -> None:
+        c = self.theme
         for child in self.rows.winfo_children():
             child.destroy()
 
@@ -346,31 +370,31 @@ class StockWidget:
             code = item["code"]
             threshold = item["threshold"]
             quote = self.quotes.get(code)
-            card = tk.Frame(self.rows, bg=CARD, height=56, highlightbackground=BORDER, highlightthickness=1)
+            card = tk.Frame(self.rows, bg=c["card"], height=56, highlightbackground=c["border"], highlightthickness=1)
             card.pack(fill="x", pady=(0, 7))
             card.pack_propagate(False)
 
             name = quote.name if quote else ("發行量加權指數" if code == "TAIEX" else "等待行情")
-            tk.Label(card, text=code, bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold"), anchor="w").place(x=11, y=7, width=78)
-            tk.Label(card, text=name, bg=CARD, fg=MUTED, font=("Microsoft JhengHei UI", 8), anchor="w").place(x=11, y=30, width=132)
+            tk.Label(card, text=code, bg=c["card"], fg=c["text"], font=("Segoe UI", 10, "bold"), anchor="w").place(x=11, y=7, width=78)
+            tk.Label(card, text=name, bg=c["card"], fg=c["muted"], font=("Microsoft JhengHei UI", 8), anchor="w").place(x=11, y=30, width=132)
 
             if quote:
-                color = MUTED if not quote.has_current_price else UP if quote.change_pct > 0 else DOWN if quote.change_pct < 0 else MUTED
-                tk.Label(card, text=price_text(quote.price), bg=CARD, fg=TEXT, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
+                color = c["muted"] if not quote.has_current_price else c["up"] if quote.change_pct > 0 else c["down"] if quote.change_pct < 0 else c["muted"]
+                tk.Label(card, text=price_text(quote.price), bg=c["card"], fg=color, font=("Segoe UI", 13, "bold"), anchor="e").place(x=140, y=6, width=106)
                 change_text = "—" if not quote.has_current_price else f"{quote.change_pct:+.2f}%"
-                tk.Label(card, text=change_text, bg=CARD, fg=color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
+                tk.Label(card, text=change_text, bg=c["card"], fg=color, font=("Segoe UI", 11, "bold"), anchor="e").place(x=250, y=8, width=88)
             else:
-                tk.Label(card, text="—", bg=CARD, fg=MUTED, font=("Segoe UI", 13), anchor="e").place(x=140, y=7, width=198)
+                tk.Label(card, text="—", bg=c["card"], fg=c["muted"], font=("Segoe UI", 13), anchor="e").place(x=140, y=7, width=198)
 
             threshold_text = "通知關閉" if threshold == 0 else f"門檻 {threshold:+g}%"
-            tk.Label(card, text=threshold_text, bg=CARD, fg=MUTED, font=("Microsoft JhengHei UI", 8), anchor="e").place(x=210, y=33, width=128)
+            tk.Label(card, text=threshold_text, bg=c["card"], fg=c["muted"], font=("Microsoft JhengHei UI", 8), anchor="e").place(x=210, y=33, width=128)
 
     def refresh(self) -> None:
         if self.refreshing:
             return
         self.refreshing = True
         self.refresh_button.configure(state="disabled")
-        self.status.configure(text="更新中…", fg=MUTED)
+        self.status.configure(text="更新中…", fg=self.theme["muted"])
         codes = [item["code"] for item in self.settings["items"]]
 
         def worker() -> None:
@@ -391,7 +415,7 @@ class StockWidget:
         self.refreshing = False
         self.refresh_button.configure(state="normal")
         if error:
-            self.status.configure(text=f"更新失敗：{error}", fg=UP)
+            self.status.configure(text=f"更新失敗：{error}", fg=self.theme["up"])
         else:
             self.quotes.update(
                 {
@@ -403,7 +427,7 @@ class StockWidget:
             missing = len(self.settings["items"]) - len(quotes)
             latest = max((f"{q.trade_date} {q.trade_time}" for q in quotes.values()), default="無資料")
             suffix = f" · {missing} 個代號無資料" if missing else ""
-            self.status.configure(text=f"TWSE MIS · {latest}{suffix}", fg=MUTED)
+            self.status.configure(text=f"TWSE MIS · {latest}{suffix}", fg=self.theme["muted"])
             self.render_rows()
             self.notify_reached_thresholds()
         self.schedule_refresh()
@@ -426,37 +450,53 @@ class StockWidget:
             self.alerted.add(key)
             notices.append(f"{quote.code} {quote.name}  {quote.change_pct:+.2f}%")
         if notices:
+            self.last_notification = "通知 " + "、".join(notices)
+            self.last_notice.configure(text=self.last_notification)
             self.show_notification("已達通知門檻", "\n".join(notices))
 
     def show_notification(self, title: str, body: str) -> None:
+        accent = self.theme["accent"]
         if winsound:
             winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         popup = tk.Toplevel(self.root)
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
-        popup.configure(bg=ACCENT)
+        popup.configure(bg=accent)
         width, height = 330, 72 + 23 * body.count("\n")
         x = popup.winfo_screenwidth() - width - 24
         y = popup.winfo_screenheight() - height - 64
         popup.geometry(f"{width}x{height}+{x}+{y}")
-        tk.Label(popup, text=title, bg=ACCENT, fg="white", font=("Microsoft JhengHei UI", 11, "bold"), anchor="w").pack(fill="x", padx=14, pady=(10, 2))
-        tk.Label(popup, text=body, bg=ACCENT, fg="white", font=("Microsoft JhengHei UI", 9), justify="left", anchor="w").pack(fill="both", expand=True, padx=14, pady=(0, 10))
+        tk.Label(popup, text=title, bg=accent, fg="white", font=("Microsoft JhengHei UI", 11, "bold"), anchor="w").pack(fill="x", padx=14, pady=(10, 2))
+        tk.Label(popup, text=body, bg=accent, fg="white", font=("Microsoft JhengHei UI", 9), justify="left", anchor="w").pack(fill="both", expand=True, padx=14, pady=(0, 10))
         popup.bind("<Button-1>", lambda _event: popup.destroy())
         popup.after(10000, lambda: popup.destroy() if popup.winfo_exists() else None)
 
+    def rebuild_ui(self) -> None:
+        self.theme = theme_for(self.settings["dark_mode"])
+        for child in self.root.winfo_children():
+            child.destroy()
+        self.root.configure(bg=self.theme["bg"])
+        self._build_ui()
+        self._set_geometry()
+        self.render_rows()
+
     def open_settings(self) -> None:
+        c = self.theme
         dialog = tk.Toplevel(self.root)
         dialog.title("追蹤設定")
-        dialog.configure(bg=BG)
+        dialog.configure(bg=c["bg"])
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.geometry(f"430x430+{self.root.winfo_x() + 24}+{self.root.winfo_y() + 40}")
 
-        tk.Label(dialog, text="追蹤代號與通知門檻", bg=BG, fg=TEXT, font=("Microsoft JhengHei UI", 13, "bold")).pack(anchor="w", padx=16, pady=(14, 4))
-        tk.Label(dialog, text="負數表示跌幅、正數表示漲幅；0 表示不通知。", bg=BG, fg=MUTED, font=("Microsoft JhengHei UI", 9)).pack(anchor="w", padx=16, pady=(0, 10))
+        tk.Label(dialog, text="追蹤代號與通知門檻", bg=c["bg"], fg=c["text"], font=("Microsoft JhengHei UI", 13, "bold")).pack(anchor="w", padx=16, pady=(14, 4))
+        tk.Label(dialog, text="負數表示跌幅、正數表示漲幅；0 表示不通知。", bg=c["bg"], fg=c["muted"], font=("Microsoft JhengHei UI", 9)).pack(anchor="w", padx=16, pady=(0, 10))
 
-        tree = ttk.Treeview(dialog, columns=("code", "threshold"), show="headings", height=9, selectmode="browse")
+        style = ttk.Style(dialog)
+        style.configure("Stock.Treeview", background=c["card"], fieldbackground=c["card"], foreground=c["text"])
+        style.map("Stock.Treeview", background=[("selected", c["accent"])], foreground=[("selected", "white")])
+        tree = ttk.Treeview(dialog, columns=("code", "threshold"), show="headings", height=9, selectmode="browse", style="Stock.Treeview")
         tree.heading("code", text="代號")
         tree.heading("threshold", text="通知門檻")
         tree.column("code", width=180, anchor="center")
@@ -470,11 +510,12 @@ class StockWidget:
             for item in working:
                 tree.insert("", "end", values=(item["code"], f"{item['threshold']:+g}%"))
 
-        form = tk.Frame(dialog, bg=BG)
+        form = tk.Frame(dialog, bg=c["bg"])
         form.pack(fill="x", padx=16, pady=10)
         code_var, threshold_var = tk.StringVar(), tk.StringVar(value="-3")
-        tk.Entry(form, textvariable=code_var, font=("Segoe UI", 10), relief="solid", bd=1).pack(side="left", fill="x", expand=True, ipady=5)
-        tk.Entry(form, textvariable=threshold_var, font=("Segoe UI", 10), width=9, relief="solid", bd=1).pack(side="left", padx=7, ipady=5)
+        entry_options = {"bg": c["card"], "fg": c["text"], "insertbackground": c["text"], "selectbackground": c["accent"], "selectforeground": "white"}
+        tk.Entry(form, textvariable=code_var, font=("Segoe UI", 10), relief="solid", bd=1, **entry_options).pack(side="left", fill="x", expand=True, ipady=5)
+        tk.Entry(form, textvariable=threshold_var, font=("Segoe UI", 10), width=9, relief="solid", bd=1, **entry_options).pack(side="left", padx=7, ipady=5)
 
         def select_item(_event=None) -> None:
             selected = tree.selection()
@@ -510,17 +551,19 @@ class StockWidget:
             working[:] = [item for item in working if item["code"] != code]
             fill_tree()
 
-        tk.Button(form, text="新增／更新", command=add_or_update, bg=ACCENT, fg="white", relief="flat", padx=10, pady=5).pack(side="left")
+        tk.Button(form, text="新增／更新", command=add_or_update, bg=c["accent"], fg="white", relief="flat", padx=10, pady=5).pack(side="left")
         tree.bind("<<TreeviewSelect>>", select_item)
 
-        controls = tk.Frame(dialog, bg=BG)
+        controls = tk.Frame(dialog, bg=c["bg"])
         controls.pack(fill="x", padx=16)
-        tk.Button(controls, text="移除選取", command=remove, relief="flat", fg=UP, bg=BG).pack(side="left")
-        tk.Label(controls, text="更新秒數", bg=BG, fg=MUTED).pack(side="left", padx=(20, 5))
+        tk.Button(controls, text="移除選取", command=remove, relief="flat", fg=c["up"], bg=c["bg"]).pack(side="left")
+        tk.Label(controls, text="更新秒數", bg=c["bg"], fg=c["muted"]).pack(side="left", padx=(20, 5))
         refresh_var = tk.StringVar(value=str(self.settings["refresh_seconds"]))
-        tk.Spinbox(controls, from_=10, to=600, increment=5, textvariable=refresh_var, width=5).pack(side="left")
+        tk.Spinbox(controls, from_=10, to=600, increment=5, textvariable=refresh_var, width=5, **entry_options).pack(side="left")
         topmost_var = tk.BooleanVar(value=self.settings["always_on_top"])
-        tk.Checkbutton(controls, text="保持最上層", variable=topmost_var, bg=BG, fg=TEXT, activebackground=BG).pack(side="right")
+        tk.Checkbutton(controls, text="保持最上層", variable=topmost_var, bg=c["bg"], fg=c["text"], activebackground=c["bg"], selectcolor=c["card"]).pack(side="right")
+        dark_mode_var = tk.BooleanVar(value=self.settings["dark_mode"])
+        tk.Checkbutton(controls, text="深色模式", variable=dark_mode_var, bg=c["bg"], fg=c["text"], activebackground=c["bg"], selectcolor=c["card"]).pack(side="right", padx=(0, 12))
 
         def apply() -> None:
             try:
@@ -531,14 +574,14 @@ class StockWidget:
             self.settings["items"] = working
             self.settings["refresh_seconds"] = refresh_seconds
             self.settings["always_on_top"] = topmost_var.get()
+            self.settings["dark_mode"] = dark_mode_var.get()
             save_settings(self.settings)
             self.root.attributes("-topmost", topmost_var.get())
-            self._set_geometry()
-            self.render_rows()
             dialog.destroy()
+            self.rebuild_ui()
             self.refresh()
 
-        tk.Button(dialog, text="儲存設定", command=apply, bg=TEXT, fg="white", relief="flat", padx=18, pady=7).pack(side="right", padx=16, pady=14)
+        tk.Button(dialog, text="儲存設定", command=apply, bg=c["text"], fg=c["bg"], relief="flat", padx=18, pady=7).pack(side="right", padx=16, pady=14)
         fill_tree()
         dialog.grab_set()
 

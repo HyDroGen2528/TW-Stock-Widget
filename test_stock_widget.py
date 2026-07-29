@@ -2,6 +2,7 @@ import json
 import ssl
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from stock_widget import (
@@ -86,6 +87,7 @@ class StockWidgetTest(unittest.TestCase):
             )
         }
         widget.alerted = set()
+        widget.last_notice = SimpleNamespace(configure=lambda **_kwargs: None)
         notices = []
         widget.show_notification = lambda title, body: notices.append((title, body))
 
@@ -106,6 +108,7 @@ class StockWidgetTest(unittest.TestCase):
         }
         cleaned = clean_settings(raw)
         self.assertEqual(cleaned["refresh_seconds"], 10)
+        self.assertFalse(cleaned["dark_mode"])
         self.assertEqual([item["code"] for item in cleaned["items"]], ["TAIEX", "2330"])
 
         with tempfile.TemporaryDirectory() as directory:
