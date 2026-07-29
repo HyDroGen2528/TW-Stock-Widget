@@ -231,7 +231,8 @@ def fetch_quotes(codes: list[str], previous_quotes: dict[str, Quote] | None = No
 def threshold_reached(change_pct: float, threshold: float) -> bool:
     if threshold == 0:
         return False
-    return change_pct <= threshold if threshold < 0 else change_pct >= threshold
+    displayed_change = round(change_pct, 2)
+    return displayed_change <= threshold if threshold < 0 else displayed_change >= threshold
 
 
 def price_text(value: float) -> str:

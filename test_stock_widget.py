@@ -58,7 +58,9 @@ class StockWidgetTest(unittest.TestCase):
     def test_signed_thresholds_and_disabled_zero(self):
         self.assertTrue(threshold_reached(-3.2, -3))
         self.assertFalse(threshold_reached(-2.9, -3))
+        self.assertTrue(threshold_reached(-4.996, -5))
         self.assertTrue(threshold_reached(5.1, 5))
+        self.assertTrue(threshold_reached(4.996, 5))
         self.assertFalse(threshold_reached(99, 0))
     def test_twse_tls_keeps_certificate_and_hostname_checks(self):
         context = twse_ssl_context()
